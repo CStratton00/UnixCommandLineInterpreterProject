@@ -1,26 +1,36 @@
 /*
 Collin Stratton
 CST-315
-Topic 7 Project 7: Code Errors and the Butterfly Effect
+Topic 4 Project 1: Improved Unix/Linux Command Line Interpreter
 Dr. Ricardo Citro
 
-For this project, the goal was to our own shell script in the Linux terminal
+For this project, the goal was to improve our created shell script
 
 References Used:
 	https://www.geeksforgeeks.org/making-linux-shell-c/
 	https://brennan.io/2015/01/16/write-a-shell-in-c/
 	https://iq.opengenus.org/ls-command-in-c/
+	https://www.geeksforgeeks.org/c-program-delete-file/
 */
 
 // directories included to be able to call specific commands
-#include<stdio.h>
-#include<string.h>
-#include<stdlib.h>
-#include<unistd.h>
-#include<sys/types.h>
-#include<sys/wait.h>
-#include<readline/readline.h>
-#include<readline/history.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+#include <sys/types.h>
+#include <sys/wait.h>
+
+// used to read the line from the terminal
+#include <readline/readline.h>
+#include <readline/history.h>
+
+//Used for handling directory files
+#include <dirent.h>
+
+//For EXIT codes and error handling
+#include <errno.h>
 
 #define MAXCOM 1000 // max number of letters supported for input
 #define MAXLIST 100 // max number of commands supported for input
@@ -64,6 +74,58 @@ void printDir() {
 	char cwd[1024];				// cwd var with array of 1024 characters
 	getcwd(cwd, sizeof(cwd));	// get the current working directory and copy it to cwd
 	printf("\n%s\n", cwd);		// print the current working directory
+}
+
+// help command
+void helpCmd() {
+	puts("\n***Help Doc***"
+		"\nList of Commands supported:"
+		"\n>cd"
+		"\n>ls"
+		"\n>rm"
+		"\n>pwd"
+		"\n>exit"
+		"\n>hello");
+
+	return;
+}
+
+// list all the files in the current working directory
+void ls() {
+	char cwd[1024];				// cwd var with array of 1024 characters
+	getcwd(cwd, sizeof(cwd));	// get the current working directory and copy it to cwd
+
+	// create variables that will store the text names of the files in the directory
+	struct dirent *d;
+	DIR *dh = opendir(cwd);
+
+	/*
+		if there is no directory
+			if an error is recorded, print that the directory doesn't exist
+			else print that the directory can't be read
+		exit the command
+	*/
+	if (!dh) {
+		if (errno == ENOENT) {
+			perror("Directory doesn't exist");
+		} else {
+			perror("Unable to read directory");
+		}
+		exit(EXIT_FAILURE);
+	}
+
+	/*
+		while the directory is readable
+			if hidden files skip
+			print all the file names in the directory
+	*/
+	while ((d = readdir(dh)) != NULL) {
+		if (d->d_name[0] == '.') {
+			continue;
+		}
+		printf("%s  ", d->d_name);
+	}
+	printf("\n");
 }
 
 // execute the command entered by the user
@@ -150,19 +212,6 @@ void execArgsPiped(char** parsed, char** parsedpipe) {
 	}
 }
 
-// help command
-void helpCmd() {
-	puts("\n***Help Doc***"
-		"\nList of Commands supported:"
-		"\n>cd"
-		"\n>ls"
-		"\n>pwd"
-		"\n>exit"
-		"\n>hello");
-
-	return;
-}
-
 // exectue commands entered by the user created by me
 int createdCmds(char** parsed) {
 	/*
@@ -170,7 +219,7 @@ int createdCmds(char** parsed) {
 		assign the names of the commands to the spaces in the array
 	*/
 
-	int totalcmds = 5, i, switcharg = 0;
+	int totalcmds = 7, i, switcharg = 0;
 	char* cmdlist[totalcmds];
 	char* username;
 
@@ -179,6 +228,8 @@ int createdCmds(char** parsed) {
 	cmdlist[2] = "help";
 	cmdlist[3] = "pwd";
 	cmdlist[4] = "hello";
+	cmdlist[5] = "ls";
+	cmdlist[6] = "rm";
 
 	/*
 		loop through the cmdlist and parsed list to compare when the commands match
@@ -209,6 +260,12 @@ int createdCmds(char** parsed) {
 		case 5:
 			username = getenv("USER");
 			printf("\nHello %s!\n", username);
+			return 1;
+		case 6:
+			ls();
+			return 1;
+		case 7:
+			remove(parsed[1]);
 			return 1;
 		default:
 			break;
@@ -331,8 +388,7 @@ void sh_loop(void) {
 }
 
 // main function that calls sh_loop
-int main()
-{
+int main() {
 	sh_loop();
 
     return 0;
