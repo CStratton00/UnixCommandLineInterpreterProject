@@ -15,9 +15,11 @@ CST-315 project to create a unix/linux command line interpreter
    - readline/history.h
    - dirent.h
    - errno.h
+   - pthread.h
+   - alloca.h
 5. Open zip file and note the location of the .c file
 6. Open terminal or commandline equivalent and go to the .c file
-7. Run `gcc linuxshell.c -lreadline -o linuxshell`
+7. Run `gcc -pthread linuxshell.c -lreadline -o linuxshell`
 8. Run `./linuxshell`
 
 # Terminal Comands Available
@@ -27,4 +29,5 @@ CST-315 project to create a unix/linux command line interpreter
 4. rm
 6. pwd
 5. help
+6. page
 7. hello
