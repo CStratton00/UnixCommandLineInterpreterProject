@@ -1,23 +1,26 @@
 /*
 Collin Stratton
 CST-315
-Topic 4 Project 1: Improved Unix/Linux Command Line Interpreter
+Topic 5 Project 2: Virtual Memory Manager
 Dr. Ricardo Citro
 
-For this project, the goal was to improve our created shell script
+For this project, the goal was to implement a virtual memory manager using paging in our shell script
 
 References Used:
 	https://www.geeksforgeeks.org/making-linux-shell-c/
 	https://brennan.io/2015/01/16/write-a-shell-in-c/
 	https://iq.opengenus.org/ls-command-in-c/
 	https://www.geeksforgeeks.org/c-program-delete-file/
+	https://github.com/azraelcrow/Virtual-Memory-Manager
 */
 
 // directories included to be able to call specific commands
+#include <alloca.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -32,10 +35,43 @@ References Used:
 //For EXIT codes and error handling
 #include <errno.h>
 
-#define MAXCOM 1000 // max number of letters supported for input
-#define MAXLIST 100 // max number of commands supported for input
+FILE *addresses;
+FILE *backing_store;
 
-#define clear() printf("\033[H\033[J") // clear the shell using escape sequences
+typedef enum { // bool type enum for explicit bool type
+    false,
+    true
+} bool;
+
+#define MAXCOM 1000 								// max number of letters supported for input
+#define MAXLIST 100 								// max number of commands supported for input
+
+#define BUFF_SIZE 10        						// buffer size for reading a line
+#define ADDRESS_MASK 0xFFFF 						// mask all of logical_address except the address
+#define OFFSET_MASK 0xFF    						// mask the offset
+#define TLB_SIZE 16         						// 16 entries in the translation lookaside buffer
+#define PAGE_TABLE_SIZE 128 						// page table of size 128
+#define PAGE 256            						// upon page fault, read in 256-byte page from BACKING_STORE
+#define FRAME_SIZE 256      						// size of each frame
+
+#define clear() printf("\033[H\033[J") 				// clear the shell using escape sequences
+
+int TLBEntries = 0;                              	// number of translation lookaside buffer entries
+int hits = 0;                                    	// counter for translation lookaside buffer hits
+int faults = 0;                                 	// counter for page faults
+int currentPage = 0;                             	// number of pages
+int logical_address;                             	// store logical address
+int TLBpages[TLB_SIZE];                          	// page numbers in translation lookaside buffer
+bool pagesRef[PAGE_TABLE_SIZE];                  	// reference bits for page numbers in translation lookaside buffer
+int pageTableNumbers[PAGE_TABLE_SIZE];           	// page numbers in page table
+char currentAddress[BUFF_SIZE];                  	// addresses
+signed char fromBackingStore[PAGE];              	// reads from BACKING_STORE
+signed char byte;                                	// value of physical memory at frame number/offset
+int physicalMemory[PAGE_TABLE_SIZE][FRAME_SIZE]; 	// physical memory array of 32,678 bytes
+
+void getPage(int logicaladdress);
+int backingStore(int pageNum);
+void TLBInsert(int pageNum, int frameNum);
 
 // shell start up text
 void init_shell() {
@@ -47,7 +83,7 @@ void init_shell() {
 
 	clear();
 	printf("\n\n\n\n******************************************");
-	printf("\n\n\n\t****Collin Stratton Shell (CSS)****");
+	printf("\n\n\n*******Collin Stratton Shell (CSS)********");
 	printf("\n\n\n\n******************************************");
 
 	printf("\n");
@@ -61,9 +97,9 @@ int takeInput(char* str) {
 
 	buf = readline("CSS > ");	// read the text after >>> in the terminal into the buffer
 	if (strlen(buf) != 0) {		// if there are characters in the buffer
-		add_history(buf);			// save the text int he buffer for later
-		strcpy(str, buf);			// copy buf into str
-		return 0;					// return 0
+		add_history(buf);		// save the text int he buffer for later
+		strcpy(str, buf);		// copy buf into str
+		return 0;				// return 0
 	} else {
 		return 1;				// else return 1
 	}
@@ -85,6 +121,7 @@ void helpCmd() {
 		"\n>rm"
 		"\n>pwd"
 		"\n>exit"
+		"\n>page"
 		"\n>hello");
 
 	return;
@@ -212,6 +249,218 @@ void execArgsPiped(char** parsed, char** parsedpipe) {
 	}
 }
 
+// get the page from the logical address
+void getPage(int logical_address) {
+	/*
+		initialize frameNum to -1
+		mask leftmost 16 bits
+		shift right 8 bits to extract page number
+		offset is just the rightmost bits
+		look through translation lookaside buffer
+	*/
+    int frameNum = -1;
+    int pageNum = ((logical_address & ADDRESS_MASK) >> 8);
+    int offset = (logical_address & OFFSET_MASK);
+    
+	/*
+		if translation lookaside buffer hit
+			extract frame number
+			increase number of hits
+	*/
+    for (int i = 0; i < TLB_SIZE; i++) {
+        if (TLBpages[i] == pageNum) {
+            frameNum = i;
+            hits++;
+        }
+    }
+
+	/*
+		if the frame number was not found in the translation lookaside buffer
+			loop through all the pages
+				if page number found in page table
+					extract
+					change reference bit
+			if frame number is -1
+				read from BACKING_STORE
+				increase the number of page faults
+				change frame number to first available frame number
+	*/
+    if (frameNum == -1) {
+        for (int i = 0; i < currentPage; i++) {
+            if (pageTableNumbers[i] == pageNum) {
+                frameNum = i;
+                pagesRef[i] = true;
+            }
+        }
+
+        if (frameNum == -1) {
+            int count = backingStore(pageNum);
+            faults++;
+            frameNum = count;
+        }
+    }
+
+	/*
+		insert page number and frame number into translation lookaside buffer
+		assign the value of the signed char to byte
+		output the virtual address, physical address and byte of the signed char to the console
+	*/
+    TLBInsert(pageNum, frameNum);
+    byte = physicalMemory[frameNum][offset];
+    printf("Virtual address: %d Physical address: %d Value: %d\n", logical_address, (frameNum << 8) | offset, byte);
+}
+
+// read from backing store
+int backingStore(int pageNum) {
+    int counter = 0;
+
+	/*
+		position to read from pageNum
+		read from beginning of file to find backing store
+	*/
+    if (fseek(backing_store, pageNum * PAGE, SEEK_SET) != 0) {
+        fprintf(stderr, "Error seeking in backing store\n");
+    }
+    if (fread(fromBackingStore, sizeof(signed char), PAGE, backing_store) == 0) {
+        fprintf(stderr, "Error reading from backing store\n");
+    }
+
+	/*
+		search until specific page is found
+			if reference bit is 0
+				replace page
+				set search to false to end loop
+			else if reference bit is 1
+				set reference bit to 0
+	*/
+    bool search = true;
+    while (search) {
+        if (currentPage == PAGE_TABLE_SIZE) {
+            currentPage = 0;
+        }
+        if (pagesRef[currentPage] == false) {
+            pageTableNumbers[currentPage] = pageNum;
+            search = false;
+        } else {
+            pagesRef[currentPage] = false;
+        }
+        currentPage++;
+    }
+    // load contents into physical memory
+    for (int i = 0; i < PAGE; i++) {
+        physicalMemory[currentPage - 1][i] = fromBackingStore[i];
+    }
+    counter = currentPage - 1;
+    return counter;
+}
+
+// insert page into translation lookaside buffer
+void TLBInsert(int pageNum, int frameNum) {
+	/*
+		search for entry in translation lookaside buffer
+	*/
+    int i;
+    for (i = 0; i < TLBEntries; i++) {
+        if (TLBpages[i] == pageNum) {
+            break;
+        }
+    }
+
+	/*
+		if the number of entries is equal to the index
+			if TLB is not full
+				insert page with FIFO replacement
+			else
+				shift everything over
+				replace first in first out
+		else the number of entries is not equal to the index
+			loop over everything to move the number of entries back 1
+			if still room in TLB
+				insert page at the end
+			else if TLB is full
+				place page at number of entries - 1
+	*/
+    if (i == TLBEntries) {
+        if (TLBEntries < TLB_SIZE) {
+            TLBpages[TLBEntries] = pageNum;
+        }
+        else {
+            for (i = 0; i < TLB_SIZE - 1; i++) {
+                TLBpages[i] = TLBpages[i + 1];
+            }
+            TLBpages[TLBEntries - 1] = pageNum;
+        }
+    } else {
+        for (i = i; i < TLBEntries - 1; i++) {
+            TLBpages[i] = TLBpages[i + 1];
+        }
+        if (TLBEntries < TLB_SIZE) { 
+            TLBpages[TLBEntries] = pageNum;
+        } else {
+            TLBpages[TLBEntries - 1] = pageNum;
+        }
+    }
+
+    // if TLB is still not full, increment the number of entries
+    if (TLBEntries < TLB_SIZE) {
+        TLBEntries++;
+    }
+}
+
+// runner for the thread
+void *runner(void *arg) {
+    system((char *)arg); // convert arg to string and runs it
+	return NULL;
+}
+
+// grabs the file from the inputted value
+void fromFile(char *fileName) {
+	/*
+		create variables store
+			file name
+			chars in the line
+			length of the list of chars
+			read length
+	*/
+    FILE *fp;
+    char *line = NULL;
+    size_t len = 0;
+    ssize_t read;
+
+	/*
+		open the inputted file
+		while the file is open
+			split string by ;
+			create threads for each token
+				split the string by ; in each thread
+			join all the threads together
+	*/
+    fp = fopen(fileName, "r");
+
+    while ((read = getline(&line, &len, fp)) != -1) {
+        char *token = strtok(line, ";");
+        pthread_t tid[10];
+        int i = 0;
+
+        while (token != NULL) {
+            pthread_create(&tid[i++], NULL, runner, token);
+            token = strtok(NULL, ";");
+        }
+
+        for (int j = 0; j < i; j++) {
+            pthread_join(tid[j], NULL);
+        }
+    }
+
+	/*
+		close the file 
+		free the line on the console
+	*/
+    fclose(fp);
+    if (line)
+        free(line);
+}
+
 // exectue commands entered by the user created by me
 int createdCmds(char** parsed) {
 	/*
@@ -219,7 +468,7 @@ int createdCmds(char** parsed) {
 		assign the names of the commands to the spaces in the array
 	*/
 
-	int totalcmds = 7, i, switcharg = 0;
+	int totalcmds = 8, i, switcharg = 0;
 	char* cmdlist[totalcmds];
 	char* username;
 
@@ -230,6 +479,7 @@ int createdCmds(char** parsed) {
 	cmdlist[4] = "hello";
 	cmdlist[5] = "ls";
 	cmdlist[6] = "rm";
+	cmdlist[7] = "page";
 
 	/*
 		loop through the cmdlist and parsed list to compare when the commands match
@@ -266,6 +516,9 @@ int createdCmds(char** parsed) {
 			return 1;
 		case 7:
 			remove(parsed[1]);
+			return 1;
+		case 8:
+			fromFile(parsed[1]);
 			return 1;
 		default:
 			break;
@@ -393,4 +646,3 @@ int main() {
 
     return 0;
 }
-
