@@ -24,6 +24,7 @@ CST-315 project to create a unix/linux command line interpreter
 6. Run `gcc -pthread linuxshell.c -lreadline -o linuxshell`
 7. Run `./linuxshell`
 
+
 # Terminal Comands Available
 1. exit
 2. cd
