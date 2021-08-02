@@ -45,7 +45,7 @@ typedef enum { // bool type enum for explicit bool type
     true
 } bool;
 
-struct dummyProcess {
+struct proc {
     int id;
     int state;
     int calculationsRemaining;
@@ -89,12 +89,12 @@ int backingStore(int pageNum);
 void TLBInsert(int pageNum, int frameNum);
 
 void runInterrupt();
-int runDummyProcess(struct dummyProcess *process);
-void scheduler(int Nprocesses, int tQNum, int printDetailed);
+int runDummyProcess(struct proc *process);
+void scheduler(int procNum, int timeoutNum, int printDetailed);
 
 //Variables for Short term Scheduler
-struct dummyProcess *processes;
-int tQuantum;
+struct proc *processes;
+int timeout;
 int numProcesses;
 int interrupt = 0; // 0 no interrupt, 1 interrupt
 
@@ -148,7 +148,8 @@ void helpCmd() {
 		"\n>pwd"
 		"\n>exit"
 		"\n>page"
-		"\n>hello");
+		"\n>hello"
+		"\n>sproc");
 
 	return;
 }
@@ -197,7 +198,7 @@ void runInterrupt() { // Simluation of I/O interrupt
     interrupt = 0;
 }
 
-int runDummyProcess(struct dummyProcess *process) { // Simulation of process doing calculations
+int runDummyProcess(struct proc *process) { // Simulation of process doing calculations
     if (process->calculationsRemaining > 0) {
         process->calculationsRemaining--; // subtract from total
     }
@@ -227,30 +228,48 @@ void *printResults() { // Simplified  information display
 	return NULL;
 }
 
-void *printResultsDetailed() { // Detailed information display with amount of time running and calculations remaining
+// Display with amount of time running and calculations remaining with extra details
+void *printResultsDetailed() {
+	/*
+		print the ID, STATE, and the amount of calculation time remaining
+		while there are still processes left that aren't in state 4
+			get the time
+			print the time
+			print the state for all the processes
+	*/
+
     time_t timeRunning;
+
     printf("ID: STATE: Calculations Remaining:\n");
     while(processes[numProcesses-1].state != 4) {
         time(&timeRunning);
         printf("Time Elapsed: %li\n", timeRunning);
+
         for (int i = 0; i < numProcesses; i++) {
             printf("%i %i %i\n",processes[i].id, processes[i].state, processes[i].calculationsRemaining);
             
         }
+
         printf("---------\n");
         sleep(1);
     }
+
     printf("All processes Completed!\n");
+
     for (int i = 0; i < numProcesses; i++) {
         printf("%i %i\n",processes[i].id, processes[i].state);        
     }
-    
-    // printf("Total Time: %li\n", timeRunning);
 
 	return NULL;
 }
 
-void *interruptInput() { // simple I/O simulation by user typing in console
+// simple I/O simulation from user typing in console
+void *interruptInput() { 
+	/*
+		while there are still processes running
+			get the character typed
+			set interrupt to 1
+	*/
     while(processes[numProcesses-1].state != 4) {
         getchar();
         interrupt = 1;
@@ -259,59 +278,64 @@ void *interruptInput() { // simple I/O simulation by user typing in console
 	return NULL;
 }
 
-// ###Short Term Scheduler Code###
-void *RR() {
-    // uses global dummyProcess struct array to simulate processes with states
+// Round Robin code
+void *RoundRobin() {
+    // uses global proc struct array to simulate processes with states
     
     // declare variables
     int numRunning = 0;
     int numCompleted = 0;
     time_t timer, starttime;
 
-    // Set processes to default values
+    // set processes to default values
     for(int i = 0; i < numProcesses; i++) {
-        processes[i].id = i; // Gives each process an ID
-        processes[i].state = 0; // Sets default state to NEW
-        processes[i].calculationsRemaining = 1000000; // Sets a default amount of calculations for processes to use
+        processes[i].id = i; 							// new ID per proc
+        processes[i].state = 0; 						// sets default state to NEW
+        processes[i].calculationsRemaining = 1000000; 	// sets a default amount of calculations
     }
 
-    while(numCompleted != numProcesses) { // while all processes not completed
+	// while all processes not completed
+    while(numCompleted != numProcesses) { 
         for (int i = 0; i < numProcesses; i++) {
-            if (processes[i].state != 4) { // Only run processes that are not completed
-                
-                // If process is NEW, set to READY
+            if (processes[i].state != 4) { // only run procs that are not completed
+                // if proc is NEW, set to READY
                 if (processes[i].state == 0) {
                     processes[i].state = 1;
                 }
-                // If process is READY and no processes are running, set to RUNNING
+
+                // if proc is READY and no processes are running, set to RUNNING
                 if (processes[i].state == 1 && numRunning == 0) {
                     processes[i].state = 3;
                 }
-                // WAIT FOR INTERRUPT IF THERE IS ONE
-                if (interrupt) { // I/O interrupt
-                    processes[i].state = 2; // Set to WAITING
+
+                // if there is an interrupt
+                if (interrupt) {
+                    processes[i].state = 2; // set proc to WAITING
                     runInterrupt();
-                    if (numRunning == 0) { // if no other processes running, go directly to running state
+
+                    if (numRunning == 0) { 	// if no other processes running, go directly to running state
                         processes[i].state = 3;
-                    }
-                    else { // else go to ready state
+                    } else { 					// else go to ready state
                         processes[i].state = 1;
                     }
                 }
-                // If Running state
+
+                // if RUNNING state
                 if (processes[i].state == 3) { 
                     numRunning++;
                     time(&starttime);
+
+					// while runProcess is still returning not completed and time is not at timeout yet
                     do {
                         time(&timer);
-                    } while (runDummyProcess(&processes[i]) == 0 && difftime(timer,starttime) <= tQuantum); // while runProcess is still returning not completed and time is not at tQuantum yet
+                    } while (runDummyProcess(&processes[i]) == 0 && difftime(timer,starttime) <= timeout);
                     
-                    // If process has finished processing, set it to terminated
+                    // if process has finished processing, set it to terminated
                     if (processes[i].calculationsRemaining <= 0) {
                         processes[i].state = 4;
                         numCompleted++;
                     }
-                    // Otherwise set it to READY
+                    // otherwise set it to READY
                     else {
                         processes[i].state = 1;
                     }
@@ -324,17 +348,18 @@ void *RR() {
 	return NULL;
 }
 
-void scheduler(int Nprocesses, int tQNum, int printDetailed) { 
-    // Set Dummy Process Variables
-    numProcesses = Nprocesses;
-    tQuantum = tQNum;
-    processes = malloc(numProcesses * sizeof(struct dummyProcess));
+// scheduler code that takes in the number of processes, the timeout value, and the print detailed number
+void scheduler(int procNum, int timeoutNum, int printDetailed) { 
+    // set initial variables
+    numProcesses = procNum;
+    timeout = timeoutNum;
+    processes = malloc(numProcesses * sizeof(struct proc));
 
-    // Create Threads
+    // create threads
     pthread_t thread, printThread, interruptThread;
-    pthread_create(&thread, NULL, &RR, NULL);
+    pthread_create(&thread, NULL, &RoundRobin, NULL);
     
-    // Set which print method depending on user input
+    // set which print method depending on user input (0 or 1)
     switch(printDetailed) {
         case 1:
             pthread_create(&printThread, NULL, &printResultsDetailed, NULL);
@@ -343,13 +368,13 @@ void scheduler(int Nprocesses, int tQNum, int printDetailed) {
             pthread_create(&printThread, NULL, &printResults, NULL);
             break;
     }
-    // Run Interrupt Simulation Thread
+    // run interrupt simulation thread
     pthread_create(&interruptThread, NULL, &interruptInput, NULL);
     
-    // Join/Cancel Threads and free up memory
+    // join and cancel threads and free up memory
     pthread_join(thread, NULL);
     pthread_join(printThread, NULL);
-    pthread_cancel(interruptThread); // Needs to be canceled to break out of loop early
+    pthread_cancel(interruptThread);
     free(processes);
 }
 
@@ -727,7 +752,7 @@ int createdCmds(char** parsed) {
 
 				scheduler(x, 2, 0);
 			} else {
-				printf("ERROR, Example Format: procs (num processes) (tQuantum) (detailed list 1/0)\n");
+				printf("ERROR, Example Format: procs (num processes) (timeout) (detailed list 1/0)\n");
 			}
 		default:
 			break;
