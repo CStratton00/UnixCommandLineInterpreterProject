@@ -18,6 +18,8 @@ References Used:
 #include <alloca.h>
 #include <stdio.h>
 #include <string.h>
+#include <signal.h>
+#include <sched.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <pthread.h>
@@ -42,6 +44,19 @@ typedef enum { // bool type enum for explicit bool type
     false,
     true
 } bool;
+
+struct dummyProcess {
+    int id;
+    int state;
+    int calculationsRemaining;
+    /*
+    0. NEW
+    1. READY
+    2. WAITING
+    3. RUNNING
+    4. TERMINATED
+    */
+};
 
 #define MAXCOM 1000 								// max number of letters supported for input
 #define MAXLIST 100 								// max number of commands supported for input
@@ -72,6 +87,17 @@ int physicalMemory[PAGE_TABLE_SIZE][FRAME_SIZE]; 	// physical memory array of 32
 void getPage(int logicaladdress);
 int backingStore(int pageNum);
 void TLBInsert(int pageNum, int frameNum);
+
+void runInterrupt();
+int runDummyProcess(struct dummyProcess *process);
+void scheduler(int Nprocesses, int tQNum, int printDetailed);
+
+//Variables for Short term Scheduler
+struct dummyProcess *processes;
+int tQuantum;
+int numProcesses;
+int interrupt = 0; // 0 no interrupt, 1 interrupt
+
 
 // shell start up text
 void init_shell() {
@@ -165,6 +191,168 @@ void ls() {
 	printf("\n");
 }
 
+void runInterrupt() { // Simluation of I/O interrupt
+    printf("!!!I/O Interrupt!!!\n");
+    sleep(1);
+    interrupt = 0;
+}
+
+int runDummyProcess(struct dummyProcess *process) { // Simulation of process doing calculations
+    if (process->calculationsRemaining > 0) {
+        process->calculationsRemaining--; // subtract from total
+    }
+    if (process->calculationsRemaining <= 0) { // Process Completed
+        return 1;
+    }
+    else { // Process not Completed
+        return 0;
+    }
+}
+
+void *printResults() { // Simplified  information display
+    printf("ID: STATE:\n");
+    while(processes[numProcesses-1].state != 4) {
+        for (int i = 0; i < numProcesses; i++) {
+            printf("%i %i\n",processes[i].id, processes[i].state);
+                    
+        }
+        printf("---------\n");
+        sleep(1);
+    }
+    printf("All processes Completed!\n");
+    for (int i = 0; i < numProcesses; i++) {
+        printf("%i %i\n",processes[i].id, processes[i].state);        
+    }
+
+	return NULL;
+}
+
+void *printResultsDetailed() { // Detailed information display with amount of time running and calculations remaining
+    time_t timeRunning;
+    printf("ID: STATE: Calculations Remaining:\n");
+    while(processes[numProcesses-1].state != 4) {
+        time(&timeRunning);
+        printf("Time Elapsed: %li\n", timeRunning);
+        for (int i = 0; i < numProcesses; i++) {
+            printf("%i %i %i\n",processes[i].id, processes[i].state, processes[i].calculationsRemaining);
+            
+        }
+        printf("---------\n");
+        sleep(1);
+    }
+    printf("All processes Completed!\n");
+    for (int i = 0; i < numProcesses; i++) {
+        printf("%i %i\n",processes[i].id, processes[i].state);        
+    }
+    
+    // printf("Total Time: %li\n", timeRunning);
+
+	return NULL;
+}
+
+void *interruptInput() { // simple I/O simulation by user typing in console
+    while(processes[numProcesses-1].state != 4) {
+        getchar();
+        interrupt = 1;
+    }
+
+	return NULL;
+}
+
+// ###Short Term Scheduler Code###
+void *RR() {
+    // uses global dummyProcess struct array to simulate processes with states
+    
+    // declare variables
+    int numRunning = 0;
+    int numCompleted = 0;
+    time_t timer, starttime;
+
+    // Set processes to default values
+    for(int i = 0; i < numProcesses; i++) {
+        processes[i].id = i; // Gives each process an ID
+        processes[i].state = 0; // Sets default state to NEW
+        processes[i].calculationsRemaining = 1000000; // Sets a default amount of calculations for processes to use
+    }
+
+    while(numCompleted != numProcesses) { // while all processes not completed
+        for (int i = 0; i < numProcesses; i++) {
+            if (processes[i].state != 4) { // Only run processes that are not completed
+                
+                // If process is NEW, set to READY
+                if (processes[i].state == 0) {
+                    processes[i].state = 1;
+                }
+                // If process is READY and no processes are running, set to RUNNING
+                if (processes[i].state == 1 && numRunning == 0) {
+                    processes[i].state = 3;
+                }
+                // WAIT FOR INTERRUPT IF THERE IS ONE
+                if (interrupt) { // I/O interrupt
+                    processes[i].state = 2; // Set to WAITING
+                    runInterrupt();
+                    if (numRunning == 0) { // if no other processes running, go directly to running state
+                        processes[i].state = 3;
+                    }
+                    else { // else go to ready state
+                        processes[i].state = 1;
+                    }
+                }
+                // If Running state
+                if (processes[i].state == 3) { 
+                    numRunning++;
+                    time(&starttime);
+                    do {
+                        time(&timer);
+                    } while (runDummyProcess(&processes[i]) == 0 && difftime(timer,starttime) <= tQuantum); // while runProcess is still returning not completed and time is not at tQuantum yet
+                    
+                    // If process has finished processing, set it to terminated
+                    if (processes[i].calculationsRemaining <= 0) {
+                        processes[i].state = 4;
+                        numCompleted++;
+                    }
+                    // Otherwise set it to READY
+                    else {
+                        processes[i].state = 1;
+                    }
+                    numRunning--;
+                }
+            }
+        }
+    }
+
+	return NULL;
+}
+
+void scheduler(int Nprocesses, int tQNum, int printDetailed) { 
+    // Set Dummy Process Variables
+    numProcesses = Nprocesses;
+    tQuantum = tQNum;
+    processes = malloc(numProcesses * sizeof(struct dummyProcess));
+
+    // Create Threads
+    pthread_t thread, printThread, interruptThread;
+    pthread_create(&thread, NULL, &RR, NULL);
+    
+    // Set which print method depending on user input
+    switch(printDetailed) {
+        case 1:
+            pthread_create(&printThread, NULL, &printResultsDetailed, NULL);
+            break;     
+        default:
+            pthread_create(&printThread, NULL, &printResults, NULL);
+            break;
+    }
+    // Run Interrupt Simulation Thread
+    pthread_create(&interruptThread, NULL, &interruptInput, NULL);
+    
+    // Join/Cancel Threads and free up memory
+    pthread_join(thread, NULL);
+    pthread_join(printThread, NULL);
+    pthread_cancel(interruptThread); // Needs to be canceled to break out of loop early
+    free(processes);
+}
+
 // execute the command entered by the user
 void execArgs(char** parsed) {
 	pid_t pid = fork();			// create a child thread pid
@@ -175,12 +363,12 @@ void execArgs(char** parsed) {
 		else wait for the child thread to terminate and exit
 	*/
 	if(pid == -1) {
-		printf("\nFailed forking child thread..");
+		printf("\nFailed forking child thread..\n");
 		return;
 	}
 	else if(pid == 0) {
 		if (execvp(parsed[0], parsed) < 0) {
-			printf("\nCould not execute command..");
+			// printf("\nCould not execute command..\n");
 		}
 		exit(0);
 	} 
@@ -468,9 +656,10 @@ int createdCmds(char** parsed) {
 		assign the names of the commands to the spaces in the array
 	*/
 
-	int totalcmds = 8, i, switcharg = 0;
+	int totalcmds = 9, i, switcharg = 0;
 	char* cmdlist[totalcmds];
 	char* username;
+	int x, y, z;
 
 	cmdlist[0] = "exit";
 	cmdlist[1] = "cd";
@@ -480,6 +669,7 @@ int createdCmds(char** parsed) {
 	cmdlist[5] = "ls";
 	cmdlist[6] = "rm";
 	cmdlist[7] = "page";
+	cmdlist[8] = "sproc";
 
 	/*
 		loop through the cmdlist and parsed list to compare when the commands match
@@ -520,6 +710,25 @@ int createdCmds(char** parsed) {
 		case 8:
 			fromFile(parsed[1]);
 			return 1;
+		case 9:
+			if (parsed[3]) {
+				sscanf(parsed[1], "%d", &x);
+				sscanf(parsed[2], "%d", &y);
+				sscanf(parsed[3], "%d", &z);
+
+				scheduler(x, y, z);
+			} else if (parsed[2]) {
+				sscanf(parsed[1], "%d", &x);
+				sscanf(parsed[2], "%d", &y);
+
+				scheduler(x, y, 0);
+			} else if (parsed[1]) {
+				sscanf(parsed[1], "%d", &x);
+
+				scheduler(x, 2, 0);
+			} else {
+				printf("ERROR, Example Format: procs (num processes) (tQuantum) (detailed list 1/0)\n");
+			}
 		default:
 			break;
 	}
