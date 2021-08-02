@@ -1,10 +1,10 @@
 /*
 Collin Stratton
 CST-315
-Topic 5 Project 2: Virtual Memory Manager
+Topic 5 Project 3: Short Term Process Scheduler
 Dr. Ricardo Citro
 
-For this project, the goal was to implement a virtual memory manager using paging in our shell script
+For this project, the goal was to implement a short term process scheduler within the CLI
 
 References Used:
 	https://www.geeksforgeeks.org/making-linux-shell-c/
@@ -92,7 +92,7 @@ void runInterrupt();
 int runDummyProcess(struct proc *process);
 void scheduler(int procNum, int timeoutNum, int printDetailed);
 
-//Variables for Short term Scheduler
+// global variables for short term scheduler
 struct proc *processes;
 int timeout;
 int numProcesses;
