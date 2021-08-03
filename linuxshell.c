@@ -12,6 +12,7 @@ References Used:
 	https://iq.opengenus.org/ls-command-in-c/
 	https://www.geeksforgeeks.org/c-program-delete-file/
 	https://github.com/azraelcrow/Virtual-Memory-Manager
+	https://faq.cprogramming.com/cgi-bin/smartfaq.cgi?answer=1046380353&id=1044780608
 */
 
 // directories included to be able to call specific commands
@@ -754,6 +755,7 @@ int createdCmds(char** parsed) {
 			} else {
 				printf("ERROR, Example Format: procs (num processes) (timeout) (detailed list 1/0)\n");
 			}
+			return 1;
 		default:
 			break;
 	}
