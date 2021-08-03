@@ -89,7 +89,7 @@ int backingStore(int pageNum);
 void TLBInsert(int pageNum, int frameNum);
 
 void runInterrupt();
-int runDummyProcess(struct proc *process);
+int runProc(struct proc *process);
 void scheduler(int procNum, int timeoutNum, int printDetailed);
 
 // global variables for short term scheduler
@@ -198,7 +198,7 @@ void runInterrupt() { // Simluation of I/O interrupt
     interrupt = 0;
 }
 
-int runDummyProcess(struct proc *process) { // Simulation of process doing calculations
+int runProc(struct proc *process) { // Simulation of process doing calculations
     if (process->calculationsRemaining > 0) {
         process->calculationsRemaining--; // subtract from total
     }
@@ -328,7 +328,7 @@ void *RoundRobin() {
 					// while runProcess is still returning not completed and time is not at timeout yet
                     do {
                         time(&timer);
-                    } while (runDummyProcess(&processes[i]) == 0 && difftime(timer,starttime) <= timeout);
+                    } while (runProc(&processes[i]) == 0 && difftime(timer,starttime) <= timeout);
                     
                     // if process has finished processing, set it to terminated
                     if (processes[i].calculationsRemaining <= 0) {
